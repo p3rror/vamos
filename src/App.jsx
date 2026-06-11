@@ -438,6 +438,18 @@ const VERBS = [
   { inf:"hacer", sk:"robiť", lvl:3, tense:"pretérito", c:["hice","hiciste","hizo","hicimos","hicisteis","hicieron"] },
   { inf:"estar", sk:"byť (stav)", lvl:3, tense:"pretérito", c:["estuve","estuviste","estuvo","estuvimos","estuvisteis","estuvieron"] },
   { inf:"decir", sk:"povedať", lvl:3, tense:"pretérito", c:["dije","dijiste","dijo","dijimos","dijisteis","dijeron"] },
+  { inf:"hablar", sk:"hovoriť", lvl:3, tense:"futuro", c:["hablaré","hablarás","hablará","hablaremos","hablaréis","hablarán"] },
+  { inf:"comer", sk:"jesť", lvl:3, tense:"futuro", c:["comeré","comerás","comerá","comeremos","comeréis","comerán"] },
+  { inf:"vivir", sk:"žiť", lvl:3, tense:"futuro", c:["viviré","vivirás","vivirá","viviremos","viviréis","vivirán"] },
+  { inf:"tener", sk:"mať", lvl:3, tense:"futuro", c:["tendré","tendrás","tendrá","tendremos","tendréis","tendrán"] },
+  { inf:"hacer", sk:"robiť", lvl:3, tense:"futuro", c:["haré","harás","hará","haremos","haréis","harán"] },
+  { inf:"poder", sk:"môcť", lvl:3, tense:"futuro", c:["podré","podrás","podrá","podremos","podréis","podrán"] },
+  { inf:"hablar", sk:"hovoriť", lvl:3, tense:"imperfecto", c:["hablaba","hablabas","hablaba","hablábamos","hablabais","hablaban"] },
+  { inf:"comer", sk:"jesť", lvl:3, tense:"imperfecto", c:["comía","comías","comía","comíamos","comíais","comían"] },
+  { inf:"vivir", sk:"žiť", lvl:3, tense:"imperfecto", c:["vivía","vivías","vivía","vivíamos","vivíais","vivían"] },
+  { inf:"ser", sk:"byť (trvalé)", lvl:3, tense:"imperfecto", c:["era","eras","era","éramos","erais","eran"] },
+  { inf:"ir", sk:"ísť", lvl:3, tense:"imperfecto", c:["iba","ibas","iba","íbamos","ibais","iban"] },
+  { inf:"ver", sk:"vidieť", lvl:3, tense:"imperfecto", c:["veía","veías","veía","veíamos","veíais","veían"] },
 ];
 
 /* ---------------- POMOCNÉ ---------------- */
@@ -487,6 +499,27 @@ const speak = (text) => {
   } catch (e) { /* TTS nedostupné */ }
 };
 
+/* krátky zvukový efekt cez WebAudio (bez súborov) */
+let audioCtx = null;
+const chime = (ok) => {
+  try {
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    const now = audioCtx.currentTime;
+    const notes = ok ? [523.25, 659.25, 783.99] : [220, 174.61];
+    notes.forEach((f, i) => {
+      const o = audioCtx.createOscillator();
+      const g = audioCtx.createGain();
+      o.type = "sine"; o.frequency.value = f;
+      const t = now + i * 0.09;
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.18, t + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.18);
+      o.connect(g); g.connect(audioCtx.destination);
+      o.start(t); o.stop(t + 0.2);
+    });
+  } catch (e) { /* audio nedostupné */ }
+};
+
 /* ---------------- STORAGE ---------------- */
 const SKEY = "vamos-es-v2";
 const memFallback = { data: null };
@@ -505,7 +538,14 @@ async function saveData(data) {
 
 const freshData = () => ({
   srs: {}, xp: 0, streak: 0, lastDay: null, level: 1, learned: {},
+  profile: { name: "", avatar: "🦉" },
+  dailyGoal: 30,
+  dayXP: {},        // "YYYY-MM-DD" -> XP získané v daný deň
+  sound: true,
+  createdAt: todayKey(),
 });
+
+const AVATARS = ["🦉","🐱","🦊","🐸","🐵","🦁","🐧","🐯","🐨","🦄","🐢","🦜"];
 
 /* ---------------- MALÉ KOMPONENTY ---------------- */
 
@@ -556,6 +596,10 @@ export default function App() {
     (async () => {
       let d = await loadData();
       if (!d) d = freshData();
+      // migrácia starších uložení (doplní chýbajúce polia)
+      d = { ...freshData(), ...d };
+      if (!d.profile) d.profile = { name: "", avatar: "🦉" };
+      if (!d.dayXP) d.dayXP = {};
       const today = todayKey();
       if (d.lastDay !== today) {
         const yest = new Date(Date.now() - 864e5).toISOString().slice(0, 10);
@@ -585,7 +629,8 @@ export default function App() {
         streak = lastDay === yest ? streak + 1 : 1;
         lastDay = today;
       }
-      return { ...d, xp: d.xp + amount, streak, lastDay };
+      const dayXP = { ...(d.dayXP || {}), [today]: ((d.dayXP || {})[today] || 0) + amount };
+      return { ...d, xp: d.xp + amount, streak, lastDay, dayXP };
     });
   }, [persist]);
 
@@ -666,6 +711,9 @@ export default function App() {
           </div>
         </div>
         <div className="stats">
+          <button className="stat avatar-btn" title="Účet" onClick={() => go("account")}>
+            {data.profile?.avatar || "🦉"}
+          </button>
           <span className="stat" title="Streak">🔥 {data.streak}</span>
           <span className="stat" title="XP">⭐ {data.xp}</span>
           <span className="stat due" title="Na zopakovanie">📥 {dueCount}</span>
@@ -674,6 +722,8 @@ export default function App() {
 
       {screen.name === "home" && (
         <main className="home">
+          <DailyGoal data={data} />
+
           <div className="levels" role="tablist" aria-label="Úroveň">
             {[1, 2, 3].map((l) => (
               <button key={l} role="tab" aria-selected={level === l}
@@ -704,7 +754,9 @@ export default function App() {
               onClick={() => go("type")} />
             <Tile icon="💬" title="Frázy" sub="Cestovanie a konverzácia" accent="t-cobalt"
               onClick={() => go("phrases")} />
-            <Tile icon="🔁" title="Slovesá" sub={level === 3 ? "Prítomný čas + pretérito" : "Časovanie — prítomný čas"} accent="t-saffron"
+            <Tile icon="🧩" title="Skladanie viet" sub="Poukladaj slová do správneho poradia" accent="t-coral"
+              onClick={() => go("build")} />
+            <Tile icon="🔁" title="Slovesá" sub={level === 3 ? "Prítomný, pretérito, futuro, imperfecto" : "Časovanie — prítomný čas"} accent="t-saffron"
               onClick={() => go("verbs")} />
           </div>
 
@@ -730,13 +782,19 @@ export default function App() {
           onExit={() => go("home")} title="Frázy" />
       )}
       {screen.name === "quiz" && (
-        <QuizSession key={"q" + level} level={level} addXP={addXP} onExit={() => go("home")} />
+        <QuizSession key={"q" + level} level={level} addXP={addXP} sound={data.sound} onExit={() => go("home")} />
       )}
       {screen.name === "type" && (
-        <TypeSession key={"t" + level} level={level} addXP={addXP} onExit={() => go("home")} />
+        <TypeSession key={"t" + level} level={level} addXP={addXP} sound={data.sound} onExit={() => go("home")} />
       )}
       {screen.name === "verbs" && (
         <VerbSession key={"v" + level} level={level} addXP={addXP} onExit={() => go("home")} />
+      )}
+      {screen.name === "build" && (
+        <BuildSession key={"b" + level} level={level} addXP={addXP} sound={data.sound} onExit={() => go("home")} />
+      )}
+      {screen.name === "account" && (
+        <Account data={data} persist={persist} onExit={() => go("home")} />
       )}
     </div>
   );
@@ -1045,7 +1103,7 @@ function FlashSession({ cards, rate, onExit, title }) {
 }
 
 /* ---------------- QUIZ ---------------- */
-function QuizSession({ level, addXP, onExit }) {
+function QuizSession({ level, addXP, sound, onExit }) {
   const questions = useMemo(() => {
     const pool = shuffle(allWords(level)).slice(0, 10);
     return pool.map((w) => {
@@ -1078,6 +1136,7 @@ function QuizSession({ level, addXP, onExit }) {
     if (picked !== null) return;
     setPicked(opt);
     if (opt === q.correct) { setScore(score + 1); addXP(10); }
+    if (sound) chime(opt === q.correct);
     setTimeout(() => { setPicked(null); setI(i + 1); }, opt === q.correct ? 700 : 1600);
   };
 
@@ -1103,7 +1162,7 @@ function QuizSession({ level, addXP, onExit }) {
 }
 
 /* ---------------- PÍSANIE ---------------- */
-function TypeSession({ level, addXP, onExit }) {
+function TypeSession({ level, addXP, sound, onExit }) {
   const questions = useMemo(() => shuffle(allWords(level)).slice(0, 8), [level]);
   const [i, setI] = useState(0);
   const [val, setVal] = useState("");
@@ -1134,9 +1193,11 @@ function TypeSession({ level, addXP, onExit }) {
       setState(exact ? "ok" : "almost");
       setScore(score + 1);
       addXP(exact ? 12 : 8);
+      if (sound) chime(true);
       speak(w.es);
     } else {
       setState("no");
+      if (sound) chime(false);
       speak(w.es);
     }
   };
@@ -1167,22 +1228,45 @@ function TypeSession({ level, addXP, onExit }) {
 
 /* ---------------- SLOVESÁ ---------------- */
 function VerbSession({ level, addXP, onExit }) {
+  const tenses = useMemo(() => {
+    const t = [...new Set(VERBS.filter((v) => v.lvl <= level).map((v) => v.tense))];
+    return level === 3 ? t : ["prítomný čas"];
+  }, [level]);
+  const [tense, setTense] = useState(null); // null = ešte nevybral (len ak >1 čas)
+  const activeTense = tenses.length === 1 ? tenses[0] : tense;
+
   const questions = useMemo(() => {
-    const pool = VERBS.filter((v) => v.lvl <= level && (level === 3 || v.tense === "prítomný čas"));
+    if (!activeTense) return [];
+    const pool = VERBS.filter((v) => v.lvl <= level && v.tense === activeTense);
     return shuffle(pool).slice(0, 10).map((v) => {
       const pi = Math.floor(Math.random() * 6);
       return { verb: v, pi, answer: v.c[pi] };
     });
-  }, [level]);
+  }, [level, activeTense]);
 
   const [i, setI] = useState(0);
   const [val, setVal] = useState("");
   const [state, setState] = useState(null);
   const [score, setScore] = useState(0);
   const inputRef = useRef(null);
-  const done = i >= questions.length;
+  const done = activeTense && i >= questions.length;
 
-  useEffect(() => { if (!done && state === null) inputRef.current?.focus(); }, [i, state, done]);
+  useEffect(() => { if (activeTense && !done && state === null) inputRef.current?.focus(); }, [i, state, done, activeTense]);
+
+  // výber času (len ak je viac možností a ešte nevybral)
+  if (!activeTense) {
+    return (
+      <Session title="Slovesá — vyber čas" onExit={onExit}>
+        <div className="tense-pick">
+          {tenses.map((t) => (
+            <button key={t} className="tense-btn" onClick={() => { setTense(t); setI(0); }}>
+              {t}
+            </button>
+          ))}
+        </div>
+      </Session>
+    );
+  }
 
   if (done) {
     return (
@@ -1236,6 +1320,259 @@ function VerbSession({ level, addXP, onExit }) {
         </div>
       )}
     </Session>
+  );
+}
+
+/* ---------------- DENNÝ CIEĽ + KALENDÁR ---------------- */
+function DailyGoal({ data }) {
+  const today = todayKey();
+  const todayXP = (data.dayXP || {})[today] || 0;
+  const goal = data.dailyGoal || 30;
+  const pct = Math.min(todayXP / goal, 1);
+  const reached = todayXP >= goal;
+
+  // posledných 7 dní
+  const days = [];
+  for (let k = 6; k >= 0; k--) {
+    const d = new Date(Date.now() - k * 864e5);
+    const key = d.toISOString().slice(0, 10);
+    const dow = ["Ne", "Po", "Ut", "St", "Št", "Pi", "So"][d.getDay()];
+    days.push({ key, dow, xp: (data.dayXP || {})[key] || 0, isToday: key === today });
+  }
+
+  const R = 26, C = 2 * Math.PI * R;
+  const hour = new Date().getHours();
+  const greet = hour < 10 ? "Buenos días" : hour < 19 ? "Buenas tardes" : "Buenas noches";
+
+  return (
+    <div className="daily">
+      <div className="daily-top">
+        <svg width="64" height="64" viewBox="0 0 64 64" className="ring">
+          <circle cx="32" cy="32" r={R} fill="none" stroke="var(--line)" strokeWidth="6" />
+          <circle cx="32" cy="32" r={R} fill="none" stroke={reached ? "var(--ok)" : "var(--cobalt)"}
+            strokeWidth="6" strokeLinecap="round" strokeDasharray={C}
+            strokeDashoffset={C * (1 - pct)} transform="rotate(-90 32 32)" />
+          <text x="32" y="37" textAnchor="middle" className="ring-txt">{reached ? "✓" : `${todayXP}`}</text>
+        </svg>
+        <div className="daily-info">
+          <div className="daily-greet">{greet}{data.profile?.name ? `, ${data.profile.name}` : ""}!</div>
+          <div className="daily-sub">
+            {reached ? "Denný cieľ splnený 🎉" : `Dnes ${todayXP} / ${goal} XP — ešte ${goal - todayXP} do cieľa`}
+          </div>
+        </div>
+      </div>
+      <div className="streak-week">
+        {days.map((d) => (
+          <div key={d.key} className={`sd ${d.xp >= goal ? "done" : d.xp > 0 ? "partial" : ""} ${d.isToday ? "today" : ""}`}>
+            <span className="sd-dot">{d.xp >= goal ? "🔥" : d.xp > 0 ? "•" : ""}</span>
+            <span className="sd-lbl">{d.dow}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ---------------- SKLADANIE VIET ---------------- */
+function BuildSession({ level, addXP, sound, onExit }) {
+  const questions = useMemo(() => {
+    const pool = PHRASES[level].filter(([es]) => es.split(" ").length >= 3 && es.split(" ").length <= 7);
+    const src = pool.length >= 5 ? pool : PHRASES[level];
+    return shuffle(src).slice(0, 8).map(([es, sk]) => {
+      const clean = es.replace(/[¿¡]/g, "");
+      const tokens = clean.replace(/([?!.,])/g, "").split(" ").filter(Boolean);
+      return { es, sk, tokens, scrambled: shuffle(tokens.map((t, idx) => ({ t, idx }))) };
+    });
+  }, [level]);
+
+  const [i, setI] = useState(0);
+  const [picked, setPicked] = useState([]);
+  const [state, setState] = useState(null);
+  const [score, setScore] = useState(0);
+  const done = i >= questions.length;
+
+  if (done) {
+    return (
+      <Session title="Skladanie viet" onExit={onExit}>
+        <Summary lines={[["✅ Správne", score], ["❌ Nesprávne", questions.length - score]]}
+          big={`${score} / ${questions.length}`} onExit={onExit} />
+      </Session>
+    );
+  }
+
+  const q = questions[i];
+  const remaining = q.scrambled.filter((s) => !picked.includes(s.idx));
+  const addTok = (idx) => { if (state === null) setPicked([...picked, idx]); };
+  const removeTok = (pos) => { if (state === null) setPicked(picked.filter((_, p) => p !== pos)); };
+
+  const check = () => {
+    const answer = picked.map((idx) => q.tokens[idx]).join(" ").toLowerCase();
+    const correct = q.tokens.join(" ").toLowerCase();
+    const ok = answer === correct;
+    setState(ok ? "ok" : "no");
+    if (ok) { setScore(score + 1); addXP(15); }
+    if (sound) chime(ok);
+    speak(q.es);
+  };
+  const next = () => { setPicked([]); setState(null); setI(i + 1); };
+
+  return (
+    <Session title="Skladanie viet" onExit={onExit} progress={[i, questions.length]}>
+      <div className="q-prompt">
+        <div className="q-label">Zostav vetu:</div>
+        <div className="q-word build-sk">{q.sk}</div>
+      </div>
+
+      <div className={`build-slots ${state || ""}`}>
+        {picked.length === 0 && <span className="build-ph">Ťukaj na slová nižšie…</span>}
+        {picked.map((idx, pos) => (
+          <button key={pos} className="tok tok-picked" onClick={() => removeTok(pos)}>
+            {q.tokens[idx]}
+          </button>
+        ))}
+      </div>
+
+      <div className="build-bank">
+        {remaining.map((s) => (
+          <button key={s.idx} className="tok" onClick={() => addTok(s.idx)}>{s.t}</button>
+        ))}
+      </div>
+
+      {state === null ? (
+        <button className="btn-primary btn-wide" onClick={check} disabled={picked.length !== q.tokens.length}>
+          Skontrolovať
+        </button>
+      ) : (
+        <>
+          {state === "ok"
+            ? <div className="fb fb-ok">✅ Správne: <strong>{q.es}</strong></div>
+            : <div className="fb fb-no">❌ Správne je: <strong>{q.es}</strong></div>}
+          <button className="btn-primary btn-wide" onClick={next}>Ďalej →</button>
+        </>
+      )}
+    </Session>
+  );
+}
+
+/* ---------------- ÚČET ---------------- */
+function Account({ data, persist, onExit }) {
+  const [name, setName] = useState(data.profile?.name || "");
+  const [confirmReset, setConfirmReset] = useState(false);
+  const fileRef = useRef(null);
+
+  const totalSeen = Object.keys(data.srs || {}).length;
+  const known = Object.values(data.srs || {}).filter((s) => s.b >= 4).length;
+  const activeDays = Object.keys(data.dayXP || {}).filter((k) => data.dayXP[k] > 0).length;
+
+  const saveProfile = (patch) =>
+    persist((d) => ({ ...d, profile: { ...d.profile, ...patch } }));
+
+  const exportData = () => {
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `vamos-progres-${todayKey()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const importData = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const parsed = JSON.parse(reader.result);
+        if (parsed && typeof parsed === "object" && "srs" in parsed) {
+          persist(() => ({ ...freshData(), ...parsed }));
+          alert("Progres bol načítaný ✅");
+        } else alert("Súbor nevyzerá ako platná záloha.");
+      } catch { alert("Nepodarilo sa načítať súbor."); }
+    };
+    reader.readAsText(file);
+  };
+
+  const doReset = () => {
+    persist(() => ({ ...freshData(), profile: { name, avatar: data.profile?.avatar || "🦉" } }));
+    setConfirmReset(false);
+  };
+
+  return (
+    <main className="session">
+      <div className="session-top">
+        <button className="btn-back" onClick={onExit}>← Domov</button>
+        <span className="session-title">Účet</span>
+      </div>
+
+      <div className="acc-profile">
+        <div className="acc-avatar">{data.profile?.avatar || "🦉"}</div>
+        <input className="acc-name" value={name} placeholder="Tvoje meno"
+          onChange={(e) => setName(e.target.value)}
+          onBlur={() => saveProfile({ name: name.trim() })}
+          onKeyDown={(e) => e.key === "Enter" && e.target.blur()}
+          maxLength={20} />
+      </div>
+
+      <div className="acc-avatars">
+        {AVATARS.map((a) => (
+          <button key={a} className={`acc-av ${data.profile?.avatar === a ? "sel" : ""}`}
+            onClick={() => saveProfile({ avatar: a })}>{a}</button>
+        ))}
+      </div>
+
+      <div className="acc-stats">
+        <div className="acc-stat"><strong>🔥 {data.streak}</strong><span>dní v rade</span></div>
+        <div className="acc-stat"><strong>⭐ {data.xp}</strong><span>celkové XP</span></div>
+        <div className="acc-stat"><strong>📚 {totalSeen}</strong><span>slov začatých</span></div>
+        <div className="acc-stat"><strong>✅ {known}</strong><span>slov zvládnutých</span></div>
+        <div className="acc-stat"><strong>📅 {activeDays}</strong><span>aktívnych dní</span></div>
+        <div className="acc-stat"><strong>🎯 {data.dailyGoal}</strong><span>denný cieľ (XP)</span></div>
+      </div>
+
+      <div className="acc-section">
+        <label className="acc-label">Denný cieľ</label>
+        <div className="goal-row">
+          {[20, 30, 50, 80].map((g) => (
+            <button key={g} className={`goal-opt ${data.dailyGoal === g ? "sel" : ""}`}
+              onClick={() => persist({ dailyGoal: g })}>{g} XP</button>
+          ))}
+        </div>
+      </div>
+
+      <div className="acc-section">
+        <label className="acc-label">Zvuky</label>
+        <button className={`toggle ${data.sound ? "on" : ""}`} onClick={() => persist({ sound: !data.sound })}>
+          <span className="toggle-knob" />
+          <span className="toggle-txt">{data.sound ? "Zapnuté" : "Vypnuté"}</span>
+        </button>
+      </div>
+
+      <div className="acc-section">
+        <label className="acc-label">Zálohovanie progresu</label>
+        <p className="acc-hint">Dáta sú uložené len v tomto zariadení. Zálohu si prenesieš do iného telefónu/počítača cez export → import.</p>
+        <div className="acc-actions">
+          <button className="btn-soft" onClick={exportData}>⬇️ Exportovať zálohu</button>
+          <button className="btn-soft" onClick={() => fileRef.current?.click()}>⬆️ Importovať zálohu</button>
+          <input ref={fileRef} type="file" accept="application/json" hidden onChange={importData} />
+        </div>
+      </div>
+
+      <div className="acc-section">
+        <label className="acc-label danger-lbl">Nebezpečná zóna</label>
+        {!confirmReset ? (
+          <button className="btn-danger" onClick={() => setConfirmReset(true)}>Vymazať celý progres</button>
+        ) : (
+          <div className="confirm-box">
+            <p>Naozaj vymazať všetko? Tento krok sa nedá vrátiť.</p>
+            <div className="acc-actions">
+              <button className="btn-soft" onClick={() => setConfirmReset(false)}>Zrušiť</button>
+              <button className="btn-danger" onClick={doReset}>Áno, vymazať</button>
+            </div>
+          </div>
+        )}
+      </div>
+    </main>
   );
 }
 
@@ -1466,6 +1803,82 @@ function Style() {
       .summary-line { display:flex; justify-content:space-between; padding:9px 14px;
                       background:var(--paper-2); border:1px solid var(--line); border-radius:10px; font-size:.92rem; }
       .empty { text-align:center; color:#6B6452; padding:40px 0; }
+
+      /* avatar button */
+      .avatar-btn { cursor:pointer; font-size:1rem; line-height:1; padding:5px 9px; }
+      .avatar-btn:hover { border-color:var(--cobalt); }
+
+      /* denný cieľ */
+      .daily { background:var(--paper-2); border:1.5px solid var(--line); border-radius:18px;
+               padding:16px; margin-bottom:18px; }
+      .daily-top { display:flex; align-items:center; gap:14px; }
+      .ring-txt { font-family:var(--display); font-weight:700; font-size:15px; fill:var(--ink); }
+      .daily-greet { font-family:var(--display); font-size:1.2rem; font-weight:700; color:var(--cobalt); }
+      .daily-sub { font-size:.84rem; color:#6B6452; margin-top:2px; }
+      .streak-week { display:grid; grid-template-columns:repeat(7,1fr); gap:6px; margin-top:14px; }
+      .sd { display:flex; flex-direction:column; align-items:center; gap:3px; padding:7px 0;
+            border-radius:10px; background:var(--paper); border:1px solid var(--line); }
+      .sd-dot { font-size:.85rem; height:1.1em; }
+      .sd-lbl { font-size:.66rem; color:#9A9176; }
+      .sd.partial { background:#FBF0D4; border-color:#EDDCA6; }
+      .sd.done { background:#DFF0E5; border-color:#B6DCC4; }
+      .sd.today { outline:2px solid var(--cobalt); outline-offset:-1px; }
+
+      /* tense picker */
+      .tense-pick { display:flex; flex-direction:column; gap:10px; padding-top:8px; }
+      .tense-btn { padding:16px; border-radius:14px; border:1.5px solid var(--line); background:var(--paper-2);
+                   font-family:var(--display); font-size:1.1rem; font-weight:700; color:var(--ink); cursor:pointer; }
+      .tense-btn:hover { border-color:var(--cobalt); background:#E8EDFA; }
+
+      /* skladanie viet */
+      .build-sk { font-size:1.5rem; }
+      .build-slots { min-height:64px; display:flex; flex-wrap:wrap; gap:8px; align-items:center;
+                     padding:14px; border-radius:14px; border:1.5px dashed var(--line); background:var(--paper-2); }
+      .build-slots.ok { border-style:solid; border-color:var(--ok); background:#DFF0E5; }
+      .build-slots.no { border-style:solid; border-color:var(--coral); background:#F9E2DA; }
+      .build-ph { color:#9A9176; font-size:.85rem; }
+      .build-bank { display:flex; flex-wrap:wrap; gap:8px; min-height:48px; }
+      .tok { padding:10px 14px; border-radius:12px; border:1.5px solid var(--line); background:var(--paper-2);
+             font-size:1rem; font-weight:600; color:var(--ink); cursor:pointer; font-family:var(--body); }
+      .tok:hover { border-color:var(--cobalt); }
+      .tok-picked { background:var(--cobalt); color:#fff; border-color:var(--cobalt); }
+
+      /* účet */
+      .acc-profile { display:flex; align-items:center; gap:14px; }
+      .acc-avatar { font-size:2.4rem; width:64px; height:64px; display:grid; place-items:center;
+                    border-radius:18px; background:var(--paper-2); border:1.5px solid var(--line); }
+      .acc-name { flex:1; min-width:0; padding:12px 14px; border-radius:12px; border:1.5px solid var(--line);
+                  background:var(--paper-2); font-size:1.1rem; font-family:var(--display); font-weight:700; color:var(--ink); }
+      .acc-avatars { display:flex; flex-wrap:wrap; gap:8px; }
+      .acc-av { font-size:1.4rem; width:46px; height:46px; border-radius:12px; border:1.5px solid var(--line);
+                background:var(--paper-2); cursor:pointer; }
+      .acc-av.sel { border-color:var(--cobalt); background:#E8EDFA; transform:scale(1.05); }
+      .acc-stats { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; }
+      .acc-stat { background:var(--paper-2); border:1px solid var(--line); border-radius:12px;
+                  padding:12px 8px; text-align:center; display:flex; flex-direction:column; gap:2px; }
+      .acc-stat strong { font-family:var(--display); font-size:1.1rem; }
+      .acc-stat span { font-size:.7rem; color:#6B6452; }
+      .acc-section { display:flex; flex-direction:column; gap:8px; }
+      .acc-label { font-family:var(--display); font-weight:700; font-size:1rem; color:var(--ink); }
+      .acc-hint { font-size:.78rem; color:#6B6452; line-height:1.5; }
+      .goal-row, .acc-actions { display:flex; gap:8px; flex-wrap:wrap; }
+      .goal-opt { flex:1; min-width:64px; padding:11px; border-radius:12px; border:1.5px solid var(--line);
+                  background:var(--paper-2); font-weight:700; cursor:pointer; color:var(--ink); }
+      .goal-opt.sel { border-color:var(--cobalt); background:var(--cobalt); color:#fff; }
+      .toggle { display:inline-flex; align-items:center; gap:10px; padding:7px 14px 7px 7px; border-radius:99px;
+                border:1.5px solid var(--line); background:var(--paper-2); cursor:pointer; align-self:flex-start; }
+      .toggle-knob { width:22px; height:22px; border-radius:50%; background:#C4BCA6; transition:all .15s ease; }
+      .toggle.on { border-color:var(--ok); }
+      .toggle.on .toggle-knob { background:var(--ok); transform:translateX(4px); }
+      .toggle-txt { font-weight:600; font-size:.9rem; }
+      .btn-soft { flex:1; min-width:140px; padding:12px; border-radius:12px; border:1.5px solid var(--line);
+                  background:var(--paper-2); font-weight:700; cursor:pointer; color:var(--ink); }
+      .btn-soft:hover { border-color:var(--cobalt); }
+      .danger-lbl { color:var(--coral); }
+      .btn-danger { padding:12px 16px; border-radius:12px; border:1.5px solid var(--coral);
+                    background:#F9E2DA; color:#A33A20; font-weight:700; cursor:pointer; }
+      .confirm-box { background:#F9E2DA; border:1.5px solid var(--coral); border-radius:14px; padding:14px;
+                     font-size:.9rem; color:#A33A20; display:flex; flex-direction:column; gap:10px; }
 
       @media (max-width: 460px) {
         .hdr h1 { font-size:1.4rem; }
